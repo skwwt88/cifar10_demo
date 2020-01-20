@@ -42,6 +42,7 @@ from functools import lru_cache as cache
 def cifar10(root='./data'):
     import torchvision
     download = lambda train: torchvision.datasets.CIFAR10(root=root, train=train, download=True)
+    print("download data complete.")
     return {k: {'data': v.data, 'targets': v.targets} for k,v in [('train', download(train=True)), ('valid', download(train=False))]}
              
 cifar10_mean, cifar10_std = [
