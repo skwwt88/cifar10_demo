@@ -40,17 +40,9 @@ from functools import lru_cache as cache
 
 @cache(None)
 def cifar10(root='./data'):
-    try: 
-        import torchvision
-        download = lambda train: torchvision.datasets.CIFAR10(root=root, train=train, download=True)
-        return {k: {'data': v.data, 'targets': v.targets} for k,v in [('train', download(train=True)), ('valid', download(train=False))]}
-    except ImportError:
-        from tensorflow.keras import datasets
-        (train_images, train_labels), (valid_images, valid_labels) = datasets.cifar10.load_data()
-        return {
-            'train': {'data': train_images, 'targets': train_labels.squeeze()},
-            'valid': {'data': valid_images, 'targets': valid_labels.squeeze()}
-        }
+    import torchvision
+    download = lambda train: torchvision.datasets.CIFAR10(root=root, train=train, download=True)
+    return {k: {'data': v.data, 'targets': v.targets} for k,v in [('train', download(train=True)), ('valid', download(train=False))]}
              
 cifar10_mean, cifar10_std = [
     (125.31, 122.95, 113.87), # equals np.mean(cifar10()['train']['data'], axis=(0,1,2)) 
