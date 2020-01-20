@@ -68,7 +68,7 @@ class DataLoader():
     def __iter__(self):
         if self.set_random_choices:
             self.dataset.set_random_choices() 
-        return ({'input': x.to(device), 'target': y.to(device).long()} for (x,y) in self.dataloader)
+        return ({'input': x.to(device).half(), 'target': y.to(device).long()} for (x,y) in self.dataloader)
     
     def __len__(self): 
         return len(self.dataloader)
@@ -134,6 +134,9 @@ class Network(nn.Module):
         return outputs
     
     def half(self):
+        for node in self.nodes():
+            if isinstance(node, nn.Module) and not isinstance(node, nn.BatchNorm2d):
+                node.half()
         return self
 
 class Identity(namedtuple('Identity', [])):
