@@ -53,7 +53,7 @@ epochs=24
 lr_schedule = PiecewiseLinear([0, 5, epochs], [0, 0.4, 0])
 batch_size = 512
 train_transforms = [Crop(32, 32), FlipLR(), Cutout(8, 8)]
-N_runs = 3
+N_runs = 1
 
 train_batches = DataLoader(Transform(train_set, train_transforms), batch_size, shuffle=True, set_random_choices=True, drop_last=True)
 valid_batches = DataLoader(valid_set, batch_size, shuffle=False, drop_last=False)
