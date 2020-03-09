@@ -43,6 +43,7 @@ transforms = [
     partial(normalise, mean=np.array(cifar10_mean, dtype=np.float32), std=np.array(cifar10_std, dtype=np.float32)),
     partial(transpose, source='NHWC', target='NCHW'), 
 ]
+
 train_set = list(zip(*preprocess(dataset['train'], [partial(pad, border=4)] + transforms).values()))
 print(f'Finished in {timer():.2} seconds')
 print('Preprocessing test data')

@@ -1,23 +1,40 @@
 import torch
 import torchvision
 import torchvision.transforms as transforms
+import numpy as np
 from torch.optim import lr_scheduler
 from collections import namedtuple, defaultdict
 
 device = torch.device("cuda: 0" if torch.cuda.is_available() else "cpu")
 
+cifar10_mean, cifar10_std = [
+    (125.31, 122.95, 113.87), # equals np.mean(cifar10()['train']['data'], axis=(0,1,2)) 
+    (62.99, 62.09, 66.70), # equals np.std(cifar10()['train']['data'], axis=(0,1,2))
+]
+
 batch_size = 512
 transform = transforms.Compose(
-    [transforms.RandomHorizontalFlip(),
+    [transforms.Pad(2),
+     transforms.RandomCrop(32),
+     transforms.RandomHorizontalFlip(),
      transforms.RandomVerticalFlip(),
      transforms.ToTensor(),
-     transforms.Normalize((0, 0, 0), (1, 1, 1)),
-     transforms.RandomErasing(0.3, scale=(0.02, 0.1))])
+     transforms.Normalize((0, 0, 0),  (1, 1, 1)),
+     transforms.RandomErasing(0.9, scale=(0.01, 0.03))])
+
+transform = transforms.Compose(
+    [transforms.RandomRotation(30),
+     transforms.RandomAffine(30),
+     transforms.ToTensor(),
+     transforms.RandomErasing(0.9, scale=(0.04, 0.08))])
+
+test_transform = transforms.Compose(
+    [transforms.ToTensor()])
 
 trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True)
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=test_transform)
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
@@ -63,48 +80,74 @@ class InceptionModule(nn.Module):
         out = torch.cat([out1, out2], dim=1)
         return out
 
+class Mul(nn.Module):
+    def __init__(self, weight):
+        super().__init__()
+        self.weight = weight
+    def __call__(self, x): 
+        return x*self.weight
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = InceptionModule(3, 64) 
-        self.res1 = Residual(128)
-        self.conv2 = ConvBn(128, 256)
-        self.conv3 = ConvBn(256, 512)
-        self.res3 = Residual(512)
-        self.conv4 = ConvBn(512, 1024)
+        self.prepare = ConvBn(3, 64) 
+        self.pool = nn.MaxPool2d(2)
+        self.conv_layer1 = ConvBn(64, 128)
+        self.res_layer1 = Residual(128)
+        self.conv_layer2 = ConvBn(128, 256)
+        self.res_layer2 = Residual(256)
+        self.conv_layer3 = ConvBn(256, 512)
+        self.res_layer3 = Residual(512)
+        self.max_pool = nn.MaxPool2d(4)
+        self.fc = nn.Linear(512, 10, bias=False)
         self.res4 = Residual(1024)
         self.pool2 = nn.MaxPool2d(2)
         self.pool4 = nn.MaxPool2d(4)
         self.dropout = nn.Dropout2d(0.2)
-        self.fc1 = nn.Linear(1024 * 1 * 1, 10, bias = False)
+        self.mul = Mul(0.125)
 
     def forward(self, x):
-        x = self.pool2(self.conv1(x))
-        x = self.res1(x)
-        x = self.pool2(self.conv2(x))
-        x = self.pool2(self.conv3(x))
-        x = self.res3(x)
+        x = self.prepare(x)
+        x = self.pool(self.conv_layer1(x))
+        x = self.res_layer1(x)
+        x = self.pool(self.conv_layer2(x))
+        x = self.res_layer2(x)
+        x = self.pool(self.conv_layer3(x))
+        x = self.res_layer3(x)
+        x = self.max_pool(x)
+        x = x.view(x.size(0), x.size(1))
+        # x = nn.Dropout(0.05)(x)
+        x = self.fc(x)
 
-        x = self.pool2(self.conv4(x))
-        x = self.res4(x)
-        x = self.pool2(x)
-
-        x = self.dropout(x)
-        x = x.view(-1, 1024 * 1 * 1)
-        x = self.fc1(x)
         return x
 
 net = Net().to(device=device)
 
 import torch.optim as optim
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9, weight_decay=2e-4 * batch_size, nesterov=True)
-scheduler = lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
+criterion = nn.CrossEntropyLoss(reduction='none')
 
-for epoch in range(50):  # loop over the dataset multiple times
 
+#scheduler = lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
+
+class PiecewiseLinear(namedtuple('PiecewiseLinear', ('knots', 'vals'))):
+    def __call__(self, t):
+        return np.interp([t], self.knots, self.vals)[0]
+
+lr_schedule = PiecewiseLinear([0, 30, 100], [0, 6, 0])
+
+optimizer = optim.SGD(net.parameters(), lr=0.000009, momentum=0.9, weight_decay=5e-4 * batch_size, nesterov=True)
+
+
+
+for epoch in range(100):  # loop over the dataset multiple times
     running_loss = 0.0
+    tcorrect = 0
+    ttotal = 0
+
+    w = 1.0
+    lr = lambda step: lr_schedule(step) * w
+    scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lr)
     for i, data in enumerate(trainloader, 0):
         # get the inputs
         inputs, labels = data
@@ -115,16 +158,15 @@ for epoch in range(50):  # loop over the dataset multiple times
         # forward + backward + optimize
         outputs = net(inputs.to(device))
         loss = criterion(outputs, labels.to(device))
-        loss.backward()
+        loss.sum().backward()
         optimizer.step()
-
-        # print statistics
-        running_loss += loss.item()
-        if i % 10 == 9:    # print every 100 mini-batches
-            print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 10))
-            running_loss = 0.0
+        scheduler.step()
+        
+        _, tpredicted = torch.max(outputs.data, 1)
+        ttotal += labels.size(0)
+        tcorrect += (tpredicted == labels.to(device)).sum().item()
     
-    scheduler.step()
+    train_acc = 100 * tcorrect / ttotal
 
     correct = 0
     total = 0
@@ -136,6 +178,6 @@ for epoch in range(50):  # loop over the dataset multiple times
             total += labels.size(0)
             correct += (predicted == labels.to(device)).sum().item()
 
-    print('Accuracy of the network on the 10000 test images: %d %%' % (100 * correct / total))
+    print('epoch {0} train_acc: {1} valid_acc: {2}'.format(epoch, train_acc, (100 * correct / total)))
 print('Finished Training')
 
